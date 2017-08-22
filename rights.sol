@@ -1,35 +1,40 @@
 pragma solidity ^0.4.11;
 
-contract Rights {
+// FIXME: abstract representation of the token contract to interact with
+contract TokenContract {
+    function transferFrom(address _from, address _to, uint _value) returns (bool success);
+}
 
-	struct Account {
-		uint rating_sold;
-		uint cashback;
-		uint money;
-		uint upvotes;
-		bool is_value;
-	}
+contract Rights {
 
 	struct Content {
 		address author;
 		address owner;
-		address[] sold_to; // Accounts
-		address[] reported; // Accounts
-		address[] upvoted; // Accounts
+		address[] soldTo; // Accounts
+		address[] reportedBy; // Accounts
+		address[] upvotedBy; // Accounts
 		uint price;
 		uint flags; // licence type
-		bool report_available;
-		bool is_value;
+		bool reportAvailable;
+		bool isValue;
 	}
 
 	mapping(address => Account) public accounts;
 
     address public KOSTA; // address of main admin (Kosta Popov)
 	address public ARVRFund;
+    address public TokenContractAddress;
+
+    function transferMoney(address _from, address _to, uint _value) returns (bool success) {
+        // instantiate the abstract representation with the pre-deployed contract, by address
+        TokenContract tokenContract = TokenContract(TokenContractAddress);
+        
+        return transferFrom(_from, _to, _value);
+    }
 
 	function Rights() { KOSTA = msg.sender; }
 
-	function set_arvrfund(address fund) {
+	function setArvrFund(address fund) {
 	    require(KOSTA == msg.sender);
 	    ARVRFund = fund;
 	}
@@ -37,76 +42,102 @@ contract Rights {
 	// hash_of_the_content => Content struct
 	mapping(bytes32 => Content) content;
 
+    const uint initialRating = 9000;
+
+    /* ACCOUNT */
+	struct Account {
+		uint rating;
+		uint upvotes;
+		bool isValue;
+	}
+
 	/* register new account */
-	function register_account() {
-		require(accounts[msg.sender].is_value == false);
+	function registerAccount() {
+		require(accounts[msg.sender].isValue == false);
 		accounts[msg.sender] = Account({
-			rating_sold: 9000, // %%
-			cashback: 0, // %%
-			money: 0,
+			rating_sold: initialRating, // %%
 			upvotes: 0,
-			is_value: true
+			isValue: true
 		});
 	}
 
-    /* supportive python-style function */
-	function ifin(address a, address[] m) constant returns (bool) {
+    // FIXME: why do we need this, is it how it's done?
+    /* check if an address is in a list of addresses */
+	function isIn(address a, address[] m) constant returns (bool) {
 	    for (uint i = 0; i < m.length; i++)
 			if (a == m[i]) return true;
 	    return false;
 	}
 
-	/* supportive python-style function for bytes32 type arrays */
-	function ifinbytes32(bytes32 a, bytes32[]m) constant returns (bool) {
+    // FIXME: why do we need this, is it how it's done?
+    /* check if an byte-sequence is in a list of byte-sequences */
+	function isInBytes32(bytes32 a, bytes32[]m) constant returns (bool) {
 		for (uint i = 0; i < m.length; i++)
 			if (a == m[i]) return true;
 		return false;
 	}
 
 	/* add content with flags and price */
-	function add_new_content(bytes32 id, uint price, uint flags) {
-		require(content[id].is_value == false); // no content with that id
+	function addNewContent(bytes32 id, uint price, uint flags) {
+		require(content[id].isValue == false); // no content with that id
 		require(price >= 0);
 
 		content[id].author = msg.sender;
 		content[id].owner = msg.sender;
 		content[id].price = price;
 		content[id].flags = flags;
-		content[id].report_available = true;
-		content[id].is_value = true;
+		content[id].reportAvailable = true;
+		content[id].isValue = true;
 	}
 
-	/* buy content with content_id */
-	function buy_content(bytes32 id) { // id is content_id: content hash value
+	/* buy content with contentId */
+	function buyContent(bytes32 id) { // id is contentId: content hash value
 		Content storage c = content[id];
 		// if id.flags don't allow to buy it: throw;
 		require(c.owner != msg.sender);
-		require(!ifin(msg.sender, c.sold_to));
-		require(accounts[msg.sender].money >= c.price);
 
-		accounts[msg.sender].money -= c.price * (1 - accounts[msg.sender].cashback / 10000);
-		accounts[c.owner].money += accounts[c.owner].rating_sold / 10000 * c.price;
-		accounts[ARVRFund].money += c.price * (1 - (accounts[c.owner].rating_sold - accounts[msg.sender].cashback) / 10000);
+        // FIXME: check implementation: if list, potentially long computation
+        // also: what to do with licenses limited in time?
+		require(!isIn(msg.sender, c.soldTo));
+		require(accounts[msg.sender].checkBalance >= c.price);
+
+        // TODO: implement cashback
+        if (transferMoney(accounts[msg.sender], accounts[c.owner], c.price))
+            {
+            // FIXME: check implementation as above
+            c.soldTo.push(msg.sender);
+            return true;
+            }
+
+        return false;
+
+    function deleteContent(bytes32 id) {
+		content[id].author = 0;
+		content[id].owner  = 0;
+		content[id].price  = 0;
+		content[id].flags  = 0;
+		content[id].reportAvailable = false;
+		content[id].isValue = false;
 	}
 
-	function transfer_ownership(bytes32 content_id, address new_owner) {
-	    require(msg.sender == content[content_id].owner);
-	    content[content_id].owner = new_owner;
+	function transferOwnership(bytes32 contentId, address newOwner) {
+	    require(msg.sender == content[contentId].owner);
+	    content[contentId].owner = newOwner;
 	}
 
-    function change_flags(bytes32 content_id, uint flags) {
-        require(msg.sender == content[content_id].owner);
-        content[content_id].flags = flags;
+    function changeFlags(bytes32 contentId, uint newFlags) {
+        require(msg.sender == content[contentId].owner);
+        content[contentId].flags = newFlags;
     }
 
-    function change_price(bytes32 content_id, uint new_price) {
-        require(msg.sender == content[content_id].owner);
-        content[content_id].price = new_price;
+    function changePrice(bytes32 contentId, uint newPrice) {
+        require(msg.sender == content[contentId].owner);
+        content[contentId].price = newPrice;
     }
 
-    function check_rights(address user, bytes32 content_id) returns (bool) {
-        if (content[content_id].owner == user) return true;
-        if (ifin(user, content[content_id].sold_to)) return true;
+    function checkRights(address user, bytes32 contentId) returns (bool) {
+        if (content[contentId].owner == user) return true;
+        if (isIn(user, content[contentId].soldTo)) return true;
         return false;
     }
 
@@ -115,39 +146,40 @@ contract Rights {
 	/* ----- ---------- ----- */
 
 	address[] public moderators;      // users who have moderation privileges
-	bytes32[] public ids_to_moderate; // content_ids what should be moderated
+	bytes32[] public idsToModerate; // contentIds that should be moderated
 
-	/* supportive function */
 	function max(uint a, uint b) constant returns (uint) {
 		if (a > b) return a;
 		return b;
 	}
 
-	/* supportive function */
 	function min(uint a, uint b) constant returns (uint) {
 		if (a < b) return a;
 		return b;
 	}
 
-	/* upvote content_id */
+	/* upvote contentId */
 	function upvote(bytes32 id) {
 		Content storage c = content[id];
-		address sid = msg.sender;
-		require(!ifin(sid, c.upvoted));
-		c.upvoted.push(sid);
+		address user = msg.sender;
+		require(!isIn(user, c.upvoted));
+		c.upvoted.push(user);
 		accounts[c.author].upvotes += 1;
 	}
 
-	/* report to content_id*/
+	/* report contentId*/
 	function report(bytes32 id) { // TODO: add report type argument
 		Content storage c = content[id];
-		address sid = msg.sender;
-		require(c.report_available == true);
-		require(!ifin(sid, c.reported));
-		c.reported.push(sid);
+		address user = msg.sender;
+        // FIXME-reportAvailable: why do we need this?
+		require(c.reportAvailable == true);
+		require(!isIn(user, c.reported));
+		c.reported.push(user);
+        // FIXME check formula
 		if (c.reported.length > 10 + (accounts[c.author].upvotes) ** 2 / 10000) { // dont know if it would work
-			c.report_available = false;
-			ids_to_moderate.push(id);
+            // FIXME-reportAvailable: why do we need this?
+			c.reportAvailable = false;
+			idsToModerate.push(id);
 		}
 	}
 
@@ -155,9 +187,9 @@ contract Rights {
 	function moderate(bytes32 id, bool vote) {
 		uint i = 0;
 		Content storage c = content[id];
-		address sid = msg.sender;
-		require(ifinbytes32(id,ids_to_moderate)); // python syntax
-		require(ifin(sid, moderators));
+		address user = msg.sender;
+		require( isInbytes32(id,idsToModerate) ); // python syntax
+		require( isIn(user, moderators) );
 		if (vote) {
 			// pay reporters
 			for (i = 0; i < c.reported.length; i++) {
@@ -165,10 +197,7 @@ contract Rights {
 				accounts[c.reported[i]].cashback = min(accounts[c.reported[i]].cashback + 10, 500);
 			}
 			// delete content
-			c.author = 0;
-			c.owner = 0;
-			c.sold_to.length = 0;
-			c.flags = 0;
+            deleteContent(c);
 		} else {
 			// punish reporters
 			for (i = 0; i < c.reported.length; i++) {
@@ -179,17 +208,17 @@ contract Rights {
 	}
 
 	/* admin's method to add moderator */
-	function add_moderator(address adr) {
+	function addModerator(address addr) {
 		require(msg.sender == KOSTA);
-		if (!ifin(adr, moderators))
-			moderators.push(adr); // python syntax
+		if (!isIn(addr, moderators))
+			moderators.push(addr); // python syntax
 	}
 
 	/* admin's method to delete moderator */
-	function del_moderator(address adr) {
+	function delModerator(address addr) {
 		require(msg.sender == KOSTA);
 		for (uint i = 0; i < moderators.length; i++) {
-				if (moderators[i] == adr) delete(moderators[i]);
+				if (moderators[i] == addr) delete(moderators[i]);
 		}
 	}
 }
