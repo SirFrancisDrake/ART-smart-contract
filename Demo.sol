@@ -5,14 +5,33 @@ pragma solidity ^0.4.15;
     // This is a simplified version of some of the key functions 
     // for demonstrative purposes. Top-level function comments are omitted,
     // array handling that avoids running out of gas errors is also omitted
+
+contract ERC20 {
+  uint public totalSupply;
+
+  function balanceOf(address _owner) constant returns (uint);
+  function transfer(address _to, uint _value) returns (bool success);
+  function transferFrom(address _from, address _to, uint _value) returns (bool success);
+  function approve(address _spender, uint _value) returns (bool success);
+  function allowance(address _owner, address _spender) constant returns (uint remaining);
+
+  event Transfer(address indexed _from, address indexed _to, uint value);
+  event Approval(address indexed _owner, address indexed _spender, uint value);
+}
     
 contract DemoFragments {
     event VoteCast(bytes32 _contentID, bool _vote);
     event VoteResolved(bytes32 _contentID, bool _VoteResultedInDeletion);
     event ReportRegistered(bytes32 _contentID);
+    event PaymentProcessed(address _from, address _to, uint _tokensSent,
+                           uint _tokensToOwner, uint _tokensToStorageFund,
+                           uint _tokensToDailyFund);
     
     uint constant public MIN_REPORTS_TO_INIT_VOTING = 10; 
     uint constant public MODERATION_VOTING_TIME = 10 days;
+    ERC20 public tokenContract;
+    address public storageFund;
+    address public dailyFund;
     
     struct Account {
         // this is a stub
@@ -101,6 +120,27 @@ contract DemoFragments {
     function rewardForSuccessfulModerationReport(address _reporter) internal {
         // Increase rating, but not above the threshold of 95% royalties
         accounts[_reporter].rating = min(accounts[_reporter].rating + 10, 9500);
+    }
+
+    // **********************
+    // ************************************* 
+    // WP page 39, royalties "A content seller: 85-95% depending on personal rating"
+    // *************************************
+    // **********************
+    function sendTokenPayment(address _recepient, uint _tokens) internal {
+        require(tokenContract.allowance(msg.sender, address(this)) >= _tokens);
+        require(tokenContract.balanceOf(msg.sender) >= _tokens);
+        uint royalty = accounts[_recepient].rating / 1000;
+        
+        uint tokensToOwner       = _tokens * royalty / 100;
+        uint tokensToStorageFund = _tokens * 2 / 100;
+        uint tokensToDailyFund   = _tokens * (95-royalty) / 100;
+        tokenContract.transferFrom(msg.sender, _recepient,  tokensToOwner);
+        tokenContract.transferFrom(msg.sender, storageFund, tokensToStorageFund);
+        tokenContract.transferFrom(msg.sender, dailyFund,   tokensToDailyFund);
+        
+        PaymentProcessed(msg.sender, _recepient, _tokens, tokensToOwner,
+                         tokensToStorageFund, tokensToDailyFund);
     }
  
      // **********************
